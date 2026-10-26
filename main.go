@@ -13,6 +13,7 @@ func main() {
 	// Register routes
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/networks", networksHandler)
+	mux.HandleFunc("/api/v1/airtime/validate", validateAirtimeHandler)
 
 	// Server configuration
 	server := &http.Server{
