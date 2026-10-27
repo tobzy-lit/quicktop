@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // HealthResponse defines the structure of our health check response
@@ -158,4 +161,37 @@ func validateAirtimeHandler(w http.ResponseWriter, r *http.Request) {
 		Message: "Airtime request validation successful",
 		Data:    req,
 	})
+}
+
+// ReadinessResponse reports whether dependencies are reachable
+type ReadinessResponse struct {
+	Status   string `json:"status"`
+	Database string `json:"database"`
+}
+
+// readyHandler checks external dependencies like PostgreSQL
+func readyHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Ping the database with a quick 2-second timeout
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
+		if err := db.PingContext(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, ReadinessResponse{
+				Status:   "error",
+				Database: "unreachable",
+			})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, ReadinessResponse{
+			Status:   "ok",
+			Database: "connected",
+		})
+	}
 }
