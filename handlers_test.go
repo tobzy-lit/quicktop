@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -142,5 +143,108 @@ func TestRegisterHandler_Integration(t *testing.T) {
 	handler.ServeHTTP(badW, badReq)
 	if badW.Result().StatusCode != http.StatusBadRequest {
 		t.Errorf("expected status 400 Bad Request, got %d", badW.Result().StatusCode)
+	}
+}
+
+func TestLoginHandler_Integration(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres://quicktop_user:quicktop_pass_local@localhost:5432/quicktop_dev?sslmode=disable"
+	}
+
+	db, err := initDB(dbURL)
+	if err != nil {
+		t.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	jwtSecret := "test-suite-jwt-secret-key"
+	uniqueEmail := fmt.Sprintf("login_test_%d@example.com", time.Now().UnixNano())
+	rawPassword := "ValidUserPassword123!"
+
+	// Seed user account for testing login
+	hash, err := hashPassword(rawPassword)
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+
+	user := &User{
+		Name:         "Login Test Subject",
+		Email:        uniqueEmail,
+		PasswordHash: hash,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := createUser(ctx, db, user); err != nil {
+		t.Fatalf("failed to seed test user: %v", err)
+	}
+
+	handler := loginHandler(db, jwtSecret)
+
+	// 1. Valid login credentials -> 200 OK with valid JWT
+	validBody := fmt.Sprintf(`{"email": "%s", "password": "%s"}`, uniqueEmail, rawPassword)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(validBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200 OK, got %d", resp.StatusCode)
+	}
+
+	var loginRes LoginResponse
+	if err := json.NewDecoder(resp.Body).Decode(&loginRes); err != nil {
+		t.Fatalf("failed to decode login response: %v", err)
+	}
+
+	if loginRes.Token == "" {
+		t.Fatalf("expected non-empty auth token in login response")
+	}
+
+	// Verify the issued token can be parsed and matches claims
+	claims, err := verifyToken(loginRes.Token, jwtSecret)
+	if err != nil {
+		t.Fatalf("issued token failed verification: %v", err)
+	}
+	if claims.UserID != user.ID {
+		t.Errorf("expected UserID %d, got %d", user.ID, claims.UserID)
+	}
+	if claims.Email != uniqueEmail {
+		t.Errorf("expected email %s, got %s", uniqueEmail, claims.Email)
+	}
+
+	// 2. Incorrect password -> 401 Unauthorized
+	badPassBody := fmt.Sprintf(`{"email": "%s", "password": "WrongPasswordXYZ"}`, uniqueEmail)
+	badPassReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(badPassBody))
+	badPassReq.Header.Set("Content-Type", "application/json")
+	badPassW := httptest.NewRecorder()
+
+	handler.ServeHTTP(badPassW, badPassReq)
+	if badPassW.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for incorrect password, got %d", badPassW.Result().StatusCode)
+	}
+
+	// 3. Unknown email -> 401 Unauthorized
+	unknownBody := `{"email": "nobody_exists_here@example.com", "password": "AnyPassword123"}`
+	unknownReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(unknownBody))
+	unknownReq.Header.Set("Content-Type", "application/json")
+	unknownW := httptest.NewRecorder()
+
+	handler.ServeHTTP(unknownW, unknownReq)
+	if unknownW.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for unknown user, got %d", unknownW.Result().StatusCode)
+	}
+
+	// 4. Missing required field -> 400 Bad Request
+	emptyBody := fmt.Sprintf(`{"email": "%s", "password": ""}`, uniqueEmail)
+	emptyReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(emptyBody))
+	emptyReq.Header.Set("Content-Type", "application/json")
+	emptyW := httptest.NewRecorder()
+
+	handler.ServeHTTP(emptyW, emptyReq)
+	if emptyW.Result().StatusCode != http.StatusBadRequest {
+		t.Errorf("expected status 400 for empty password, got %d", emptyW.Result().StatusCode)
 	}
 }

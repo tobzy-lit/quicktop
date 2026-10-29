@@ -85,3 +85,42 @@ func TestCreateUser_Integration(t *testing.T) {
 		t.Errorf("expected ErrDuplicateEmail, got: %v", dupErr)
 	}
 }
+
+func TestJWT_GenerateAndVerify(t *testing.T) {
+	secret := "test-secret-key-12345"
+
+	// 1. Successful generation and verification
+	tokenStr, err := generateToken(42, "testuser@example.com", secret, 1*time.Hour)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	claims, err := verifyToken(tokenStr, secret)
+	if err != nil {
+		t.Fatalf("failed to verify valid token: %v", err)
+	}
+
+	if claims.UserID != 42 {
+		t.Errorf("expected UserID 42, got %d", claims.UserID)
+	}
+	if claims.Email != "testuser@example.com" {
+		t.Errorf("expected email testuser@example.com, got %s", claims.Email)
+	}
+
+	// 2. Reject verification with wrong secret
+	_, err = verifyToken(tokenStr, "wrong-secret-key")
+	if err == nil {
+		t.Errorf("expected verification failure with wrong secret, got nil")
+	}
+
+	// 3. Reject expired token
+	expiredTokenStr, err := generateToken(42, "testuser@example.com", secret, -1*time.Minute)
+	if err != nil {
+		t.Fatalf("failed to generate expired token: %v", err)
+	}
+
+	_, err = verifyToken(expiredTokenStr, secret)
+	if err == nil {
+		t.Errorf("expected verification failure for expired token, got nil")
+	}
+}

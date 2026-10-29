@@ -492,3 +492,79 @@ func registerHandler(db *sql.DB) http.HandlerFunc {
 		})
 	}
 }
+
+// loginHandler authenticates a user and returns a signed JWT
+func loginHandler(db *sql.DB, jwtSecret string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"status": "error",
+				"error":  "Method not allowed",
+			})
+			return
+		}
+
+		var req LoginRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"status": "error",
+				"error":  "Invalid request payload",
+			})
+			return
+		}
+
+		if err := req.Validate(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"status": "error",
+				"error":  err.Error(),
+			})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		user, err := getUserByEmail(ctx, db, req.Email)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{
+					"status": "error",
+					"error":  "Invalid email or password",
+				})
+				return
+			}
+
+			log.Printf("Database error during login: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"status": "error",
+				"error":  "Internal server error",
+			})
+			return
+		}
+
+		if !checkPasswordHash(req.Password, user.PasswordHash) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"status": "error",
+				"error":  "Invalid email or password",
+			})
+			return
+		}
+
+		token, err := generateToken(user.ID, user.Email, jwtSecret, 24*time.Hour)
+		if err != nil {
+			log.Printf("Failed to generate token: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"status": "error",
+				"error":  "Internal server error",
+			})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, LoginResponse{
+			Status:  "ok",
+			Message: "Login successful",
+			Token:   token,
+			User:    *user,
+		})
+	}
+}

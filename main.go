@@ -13,6 +13,10 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "dev-secret-quicktop-insecure-local-only"
+	}
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -35,6 +39,8 @@ func main() {
 	mux.HandleFunc("/api/v1/airtime/purchase", purchaseAirtimeHandler(db))
 	mux.HandleFunc("/api/v1/transactions/", getTransactionHandler(db))
 	mux.HandleFunc("/api/v1/auth/register", registerHandler(db))
+	mux.HandleFunc("/api/v1/auth/login", loginHandler(db, jwtSecret))
+
 	// 4. Configure HTTP server with safety timeouts
 	server := &http.Server{
 		Addr:         ":" + port,
