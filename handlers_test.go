@@ -321,3 +321,116 @@ func TestAuthenticatedPurchase_Integration(t *testing.T) {
 		t.Errorf("expected transaction user_id %d, got %d", user.ID, *tx.UserID)
 	}
 }
+
+func TestUserTransactions_Integration(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres://quicktop_user:quicktop_pass_local@localhost:5432/quicktop_dev?sslmode=disable"
+	}
+
+	db, err := initDB(dbURL)
+	if err != nil {
+		t.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	jwtSecret := "history-test-secret"
+	email := fmt.Sprintf("history_user_%d@example.com", time.Now().UnixNano())
+
+	// 1. Seed user
+	user := &User{
+		Name:         "History Test User",
+		Email:        email,
+		PasswordHash: "dummyhash",
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := createUser(ctx, db, user); err != nil {
+		t.Fatalf("failed to seed test user: %v", err)
+	}
+
+	token, err := generateToken(user.ID, user.Email, jwtSecret, 1*time.Hour)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	handler := requireAuthMiddleware(jwtSecret, userTransactionsHandler(db))
+
+	// 2. Unauthenticated request -> 401
+	unauthReq := httptest.NewRequest(http.MethodGet, "/api/v1/user/transactions", nil)
+	unauthW := httptest.NewRecorder()
+	handler.ServeHTTP(unauthW, unauthReq)
+	if unauthW.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 for unauthenticated request, got %d", unauthW.Result().StatusCode)
+	}
+
+	// 3. Seed two transactions for this user
+	tx1 := &Transaction{
+		Reference:   fmt.Sprintf("QT-TEST-HIST-1-%d", time.Now().UnixNano()),
+		PhoneNumber: "08030000001",
+		Network:     "MTN",
+		AmountKobo:  10000,
+		Status:      StatusPending,
+		UserID:      &user.ID,
+	}
+	if err := createTransaction(ctx, db, tx1); err != nil {
+		t.Fatalf("failed to insert tx1: %v", err)
+	}
+
+	tx2 := &Transaction{
+		Reference:   fmt.Sprintf("QT-TEST-HIST-2-%d", time.Now().UnixNano()),
+		PhoneNumber: "08030000002",
+		Network:     "GLO",
+		AmountKobo:  20000,
+		Status:      StatusSuccess,
+		UserID:      &user.ID,
+	}
+	if err := createTransaction(ctx, db, tx2); err != nil {
+		t.Fatalf("failed to insert tx2: %v", err)
+	}
+
+	// Seed one guest transaction (should NOT be returned)
+	guestTx := &Transaction{
+		Reference:   fmt.Sprintf("QT-TEST-GUEST-%d", time.Now().UnixNano()),
+		PhoneNumber: "08039999999",
+		Network:     "AIRTEL",
+		AmountKobo:  50000,
+		Status:      StatusPending,
+		UserID:      nil,
+	}
+	if err := createTransaction(ctx, db, guestTx); err != nil {
+		t.Fatalf("failed to insert guestTx: %v", err)
+	}
+
+	// 4. Authenticated request -> 200 OK with isolated results
+	authReq := httptest.NewRequest(http.MethodGet, "/api/v1/user/transactions", nil)
+	authReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	authW := httptest.NewRecorder()
+	handler.ServeHTTP(authW, authReq)
+
+	resp := authW.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200 OK, got %d", resp.StatusCode)
+	}
+
+	var res struct {
+		Status string        `json:"status"`
+		Count  int           `json:"count"`
+		Data   []Transaction `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if res.Count < 2 {
+		t.Errorf("expected count >= 2, got %d", res.Count)
+	}
+
+	// Assert all returned items belong exclusively to this user
+	for _, item := range res.Data {
+		if item.UserID == nil || *item.UserID != user.ID {
+			t.Errorf("data leak: returned transaction %s has user_id %v, expected %d", item.Reference, item.UserID, user.ID)
+		}
+	}
+}

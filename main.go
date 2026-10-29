@@ -40,7 +40,7 @@ func main() {
 	mux.HandleFunc("/api/v1/transactions/", getTransactionHandler(db))
 	mux.HandleFunc("/api/v1/auth/register", registerHandler(db))
 	mux.HandleFunc("/api/v1/auth/login", loginHandler(db, jwtSecret))
-
+	mux.HandleFunc("/api/v1/user/transactions", requireAuthMiddleware(jwtSecret, userTransactionsHandler(db)))
 	// 4. Configure HTTP server with safety timeouts
 	server := &http.Server{
 		Addr:         ":" + port,

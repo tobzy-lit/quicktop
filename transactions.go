@@ -156,3 +156,46 @@ func updateTransactionStatus(ctx context.Context, db *sql.DB, reference, current
 
 	return nil
 }
+
+// getTransactionsByUserID retrieves all transactions linked to a specific user ordered chronologically
+func getTransactionsByUserID(ctx context.Context, db *sql.DB, userID int64) ([]Transaction, error) {
+	query := `
+		SELECT id, reference, phone_number, network, amount_kobo, status, user_id, created_at, updated_at
+		FROM transactions
+		WHERE user_id = $1
+		ORDER BY created_at DESC;
+	`
+
+	rows, err := db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query user transactions: %w", err)
+	}
+	defer rows.Close()
+
+	// Initialize as an empty slice so it serializes to JSON [] rather than null
+	transactions := make([]Transaction, 0)
+	for rows.Next() {
+		var tx Transaction
+		err := rows.Scan(
+			&tx.ID,
+			&tx.Reference,
+			&tx.PhoneNumber,
+			&tx.Network,
+			&tx.AmountKobo,
+			&tx.Status,
+			&tx.UserID,
+			&tx.CreatedAt,
+			&tx.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan user transaction row: %w", err)
+		}
+		transactions = append(transactions, tx)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during row iteration: %w", err)
+	}
+
+	return transactions, nil
+}

@@ -574,3 +574,44 @@ func loginHandler(db *sql.DB, jwtSecret string) http.HandlerFunc {
 		})
 	}
 }
+
+// userTransactionsHandler returns transactions belonging to the authenticated user
+func userTransactionsHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"status": "error",
+				"error":  "Method not allowed",
+			})
+			return
+		}
+
+		userID, ok := getUserIDFromContext(r.Context())
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"status": "error",
+				"error":  "Unauthorized",
+			})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		transactions, err := getTransactionsByUserID(ctx, db, userID)
+		if err != nil {
+			log.Printf("Failed to retrieve user transactions: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"status": "error",
+				"error":  "Internal server error",
+			})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "ok",
+			"count":  len(transactions),
+			"data":   transactions,
+		})
+	}
+}
