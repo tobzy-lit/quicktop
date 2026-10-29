@@ -307,12 +307,18 @@ func purchaseAirtimeHandler(db *sql.DB) http.HandlerFunc {
 		cleanPhone := strings.TrimSpace(req.PhoneNumber)
 		amountKobo := int64(req.Amount) * 100
 
+		var userIDPtr *int64
+		if uID, ok := getUserIDFromContext(r.Context()); ok {
+			userIDPtr = &uID
+		}
+
 		txRecord := &Transaction{
 			Reference:   ref,
 			Network:     cleanNetwork,
 			PhoneNumber: cleanPhone,
 			AmountKobo:  amountKobo,
 			Status:      StatusPending,
+			UserID:      userIDPtr,
 		}
 
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)

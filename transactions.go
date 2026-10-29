@@ -56,10 +56,11 @@ func IsValidTransition(from, to string) bool {
 type Transaction struct {
 	ID          int64     `json:"id"`
 	Reference   string    `json:"reference"`
-	Network     string    `json:"network"`
 	PhoneNumber string    `json:"phone_number"`
+	Network     string    `json:"network"`
 	AmountKobo  int64     `json:"amount_kobo"`
 	Status      string    `json:"status"`
+	UserID      *int64    `json:"user_id,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -72,25 +73,23 @@ var (
 )
 
 // createTransaction inserts a new pending airtime record into PostgreSQL
-func createTransaction(ctx context.Context, db *sql.DB, t *Transaction) error {
+func createTransaction(ctx context.Context, db *sql.DB, tx *Transaction) error {
 	query := `
-		INSERT INTO transactions (reference, network, phone_number, amount_kobo, status)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO transactions (reference, phone_number, network, amount_kobo, status, user_id)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at;
 	`
 
-	if t.Status == "" {
-		t.Status = StatusPending
-	}
-
-	err := db.QueryRowContext(ctx, query,
-		t.Reference,
-		t.Network,
-		t.PhoneNumber,
-		t.AmountKobo,
-		t.Status,
-	).Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
-
+	err := db.QueryRowContext(
+		ctx,
+		query,
+		tx.Reference,
+		tx.PhoneNumber,
+		tx.Network,
+		tx.AmountKobo,
+		tx.Status,
+		tx.UserID,
+	).Scan(&tx.ID, &tx.CreatedAt, &tx.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to insert transaction: %w", err)
 	}
@@ -99,33 +98,34 @@ func createTransaction(ctx context.Context, db *sql.DB, t *Transaction) error {
 }
 
 // getTransactionByReference retrieves an existing record by its unique reference
-func getTransactionByReference(ctx context.Context, db *sql.DB, reference string) (*Transaction, error) {
+
+func getTransactionByReference(ctx context.Context, db *sql.DB, ref string) (*Transaction, error) {
 	query := `
-		SELECT id, reference, network, phone_number, amount_kobo, status, created_at, updated_at
+		SELECT id, reference, phone_number, network, amount_kobo, status, user_id, created_at, updated_at
 		FROM transactions
 		WHERE reference = $1;
 	`
 
-	var t Transaction
-	err := db.QueryRowContext(ctx, query, reference).Scan(
-		&t.ID,
-		&t.Reference,
-		&t.Network,
-		&t.PhoneNumber,
-		&t.AmountKobo,
-		&t.Status,
-		&t.CreatedAt,
-		&t.UpdatedAt,
+	var tx Transaction
+	err := db.QueryRowContext(ctx, query, ref).Scan(
+		&tx.ID,
+		&tx.Reference,
+		&tx.PhoneNumber,
+		&tx.Network,
+		&tx.AmountKobo,
+		&tx.Status,
+		&tx.UserID,
+		&tx.CreatedAt,
+		&tx.UpdatedAt,
 	)
-
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrTransactionNotFound
 		}
-		return nil, fmt.Errorf("failed to query transaction: %w", err)
+		return nil, err
 	}
 
-	return &t, nil
+	return &tx, nil
 }
 
 // updateTransactionStatus safely transitions a transaction from currentStatus to newStatus

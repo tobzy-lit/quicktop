@@ -248,3 +248,76 @@ func TestLoginHandler_Integration(t *testing.T) {
 		t.Errorf("expected status 400 for empty password, got %d", emptyW.Result().StatusCode)
 	}
 }
+
+func TestAuthenticatedPurchase_Integration(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres://quicktop_user:quicktop_pass_local@localhost:5432/quicktop_dev?sslmode=disable"
+	}
+
+	db, err := initDB(dbURL)
+	if err != nil {
+		t.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	jwtSecret := "integration-test-secret"
+	email := fmt.Sprintf("auth_tx_%d@example.com", time.Now().UnixNano())
+
+	// 1. Seed a user
+	user := &User{
+		Name:         "Auth Tx User",
+		Email:        email,
+		PasswordHash: "dummyhash",
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := createUser(ctx, db, user); err != nil {
+		t.Fatalf("failed to seed test user: %v", err)
+	}
+
+	// 2. Generate a token for this user
+	token, err := generateToken(user.ID, user.Email, jwtSecret, 1*time.Hour)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	// 3. Wrap purchase handler with optionalAuthMiddleware
+	handler := optionalAuthMiddleware(jwtSecret, purchaseAirtimeHandler(db))
+
+	payload := `{"network": "GLO", "phone_number": "08051234567", "amount": 200}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/airtime/purchase", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+	resp := w.Result()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected status 201 Created, got %d", resp.StatusCode)
+	}
+
+	var purchaseRes AirtimePurchaseResponse
+	if err := json.NewDecoder(resp.Body).Decode(&purchaseRes); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if purchaseRes.Reference == "" {
+		t.Fatalf("expected non-empty reference in purchase response")
+	}
+
+	// 4. Retrieve from DB and assert user_id matches
+	tx, err := getTransactionByReference(ctx, db, purchaseRes.Reference)
+	if err != nil {
+		t.Fatalf("failed to look up transaction: %v", err)
+	}
+
+	if tx.UserID == nil {
+		t.Fatalf("expected transaction user_id to be set, got nil")
+	}
+
+	if *tx.UserID != user.ID {
+		t.Errorf("expected transaction user_id %d, got %d", user.ID, *tx.UserID)
+	}
+}
