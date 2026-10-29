@@ -420,3 +420,75 @@ func getTransactionHandler(db *sql.DB) http.HandlerFunc {
 		})
 	}
 }
+
+// registerHandler handles user registration requests
+func registerHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"status": "error",
+				"error":  "Method not allowed",
+			})
+			return
+		}
+
+		var req RegisterRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"status": "error",
+				"error":  "Invalid request payload",
+			})
+			return
+		}
+
+		if err := req.Validate(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"status": "error",
+				"error":  err.Error(),
+			})
+			return
+		}
+
+		hash, err := hashPassword(req.Password)
+		if err != nil {
+			log.Printf("Failed to hash password during registration: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"status": "error",
+				"error":  "Internal server error",
+			})
+			return
+		}
+
+		user := &User{
+			Name:         req.Name,
+			Email:        req.Email,
+			PasswordHash: hash,
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		if err := createUser(ctx, db, user); err != nil {
+			if errors.Is(err, ErrDuplicateEmail) {
+				writeJSON(w, http.StatusConflict, map[string]string{
+					"status": "error",
+					"error":  "Email address already registered",
+				})
+				return
+			}
+
+			log.Printf("Failed to register user: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"status": "error",
+				"error":  "Failed to create user account",
+			})
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, RegisterResponse{
+			Status:  "ok",
+			Message: "User registered successfully",
+			User:    *user,
+		})
+	}
+}

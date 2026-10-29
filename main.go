@@ -34,7 +34,7 @@ func main() {
 	mux.HandleFunc("/api/v1/airtime/validate", validateAirtimeHandler)
 	mux.HandleFunc("/api/v1/airtime/purchase", purchaseAirtimeHandler(db))
 	mux.HandleFunc("/api/v1/transactions/", getTransactionHandler(db))
-
+	mux.HandleFunc("/api/v1/auth/register", registerHandler(db))
 	// 4. Configure HTTP server with safety timeouts
 	server := &http.Server{
 		Addr:         ":" + port,
