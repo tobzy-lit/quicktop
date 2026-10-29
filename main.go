@@ -32,6 +32,8 @@ func main() {
 	mux.HandleFunc("/ready", readyHandler(db))
 	mux.HandleFunc("/api/v1/networks", networksHandler)
 	mux.HandleFunc("/api/v1/airtime/validate", validateAirtimeHandler)
+	mux.HandleFunc("/api/v1/airtime/purchase", purchaseAirtimeHandler(db))
+	mux.HandleFunc("/api/v1/transactions/", getTransactionHandler(db))
 
 	// 4. Configure HTTP server with safety timeouts
 	server := &http.Server{
