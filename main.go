@@ -41,17 +41,18 @@ func main() {
 	mux.HandleFunc("/api/v1/auth/register", registerHandler(db))
 	mux.HandleFunc("/api/v1/auth/login", loginHandler(db, jwtSecret))
 	mux.HandleFunc("/api/v1/user/transactions", requireAuthMiddleware(jwtSecret, userTransactionsHandler(db)))
-	// 4. Configure HTTP server with safety timeouts
+
+	// 4. Configure HTTP server with safety timeouts and CORS
 	server := &http.Server{
 		Addr:         ":" + port,
-		Handler:      mux,
+		Handler:      corsMiddleware(mux),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
-	log.Printf("QuickTop server starting on port %s...", port)
+	log.Printf("QuickTop server running on port %s", port)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Server stopped unexpectedly: %v", err)
+		log.Fatalf("Server failed to start: %v", err)
 	}
 }
