@@ -180,6 +180,20 @@ func TestLoginHandler_Integration(t *testing.T) {
 		t.Fatalf("failed to seed test user: %v", err)
 	}
 
+	// Fund user's wallet with 100,000 Kobo (₦1,000) for the purchase test
+	seedTx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("failed to start funding tx: %v", err)
+	}
+	_, err = CreditWallet(ctx, seedTx, user.ID, 100000, fmt.Sprintf("SEED-%d", time.Now().UnixNano()), "Initial test seed funding")
+	if err != nil {
+		seedTx.Rollback()
+		t.Fatalf("failed to seed wallet balance: %v", err)
+	}
+	if err := seedTx.Commit(); err != nil {
+		t.Fatalf("failed to commit seed funding tx: %v", err)
+	}
+
 	handler := loginHandler(db, jwtSecret)
 
 	// 1. Valid login credentials -> 200 OK with valid JWT
@@ -275,6 +289,20 @@ func TestAuthenticatedPurchase_Integration(t *testing.T) {
 
 	if err := createUser(ctx, db, user); err != nil {
 		t.Fatalf("failed to seed test user: %v", err)
+	}
+
+	// Fund user's wallet with 100,000 Kobo (₦1,000) for the purchase test
+	seedTx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("failed to start funding tx: %v", err)
+	}
+	_, err = CreditWallet(ctx, seedTx, user.ID, 100000, fmt.Sprintf("SEED-%d", time.Now().UnixNano()), "Initial test seed funding")
+	if err != nil {
+		seedTx.Rollback()
+		t.Fatalf("failed to seed wallet balance: %v", err)
+	}
+	if err := seedTx.Commit(); err != nil {
+		t.Fatalf("failed to commit seed funding tx: %v", err)
 	}
 
 	// 2. Generate a token for this user

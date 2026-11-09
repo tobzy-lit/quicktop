@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -324,13 +325,62 @@ func purchaseAirtimeHandler(db *sql.DB, provider AirtimeProvider) http.HandlerFu
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		if err := createTransaction(ctx, db, txRecord); err != nil {
-			log.Printf("Failed to insert purchase transaction: %v", err)
-			writeJSON(w, http.StatusInternalServerError, ErrorResponse{
-				Status: "error",
-				Error:  "Failed to record transaction",
-			})
-			return
+		if userIDPtr != nil {
+			sqlTx, err := db.BeginTx(ctx, nil)
+			if err != nil {
+				log.Printf("Failed to start db transaction: %v", err)
+				writeJSON(w, http.StatusInternalServerError, ErrorResponse{
+					Status: "error",
+					Error:  "Failed to process wallet transaction",
+				})
+				return
+			}
+			defer sqlTx.Rollback()
+
+			desc := fmt.Sprintf("Airtime purchase: %s - %s", cleanNetwork, cleanPhone)
+			_, err = DebitWallet(ctx, sqlTx, *userIDPtr, amountKobo, ref, desc, "AIRTIME_PURCHASE")
+			if err != nil {
+				if errors.Is(err, ErrInsufficientFund) {
+					writeJSON(w, http.StatusUnprocessableEntity, ErrorResponse{
+						Status: "error",
+						Error:  "Insufficient wallet balance",
+					})
+					return
+				}
+				log.Printf("Wallet debit failed for user %d: %v", *userIDPtr, err)
+				writeJSON(w, http.StatusInternalServerError, ErrorResponse{
+					Status: "error",
+					Error:  "Failed to debit wallet",
+				})
+				return
+			}
+
+			if err := createTransactionTx(ctx, sqlTx, txRecord); err != nil {
+				log.Printf("Failed to insert purchase transaction in tx: %v", err)
+				writeJSON(w, http.StatusInternalServerError, ErrorResponse{
+					Status: "error",
+					Error:  "Failed to record transaction",
+				})
+				return
+			}
+
+			if err := sqlTx.Commit(); err != nil {
+				log.Printf("Failed to commit wallet debit tx: %v", err)
+				writeJSON(w, http.StatusInternalServerError, ErrorResponse{
+					Status: "error",
+					Error:  "Transaction commit failed",
+				})
+				return
+			}
+		} else {
+			if err := createTransaction(ctx, db, txRecord); err != nil {
+				log.Printf("Failed to insert purchase transaction: %v", err)
+				writeJSON(w, http.StatusInternalServerError, ErrorResponse{
+					Status: "error",
+					Error:  "Failed to record transaction",
+				})
+				return
+			}
 		}
 
 		// Trigger background simulation
@@ -618,11 +668,11 @@ func userTransactionsHandler(db *sql.DB) http.HandlerFunc {
 
 // WalletDetailsResponse models the JSON returned to authenticated users
 type WalletDetailsResponse struct {
-	Status        string        `json:"status"`
-	WalletID      int64         `json:"wallet_id"`
-	BalanceKobo   int64         `json:"balance_kobo"`
-	BalanceNaira  float64       `json:"balance_naira"`
-	RecentLedger  []LedgerEntry `json:"recent_ledger"`
+	Status       string        `json:"status"`
+	WalletID     int64         `json:"wallet_id"`
+	BalanceKobo  int64         `json:"balance_kobo"`
+	BalanceNaira float64       `json:"balance_naira"`
+	RecentLedger []LedgerEntry `json:"recent_ledger"`
 }
 
 // getWalletHandler returns the authenticated user's wallet balance and ledger history

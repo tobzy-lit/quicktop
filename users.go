@@ -117,15 +117,21 @@ func checkPasswordHash(password, hash string) bool {
 
 var ErrDuplicateEmail = errors.New("email address already registered")
 
-// createUser inserts a new user record into PostgreSQL
+// createUser inserts a new user record into PostgreSQL and initializes their wallet
 func createUser(ctx context.Context, db *sql.DB, user *User) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	query := `
 		INSERT INTO users (name, email, password_hash)
 		VALUES ($1, $2, $3)
 		RETURNING id, created_at, updated_at;
 	`
 
-	err := db.QueryRowContext(ctx, query, user.Name, user.Email, user.PasswordHash).Scan(
+	err = tx.QueryRowContext(ctx, query, user.Name, user.Email, user.PasswordHash).Scan(
 		&user.ID,
 		&user.CreatedAt,
 		&user.UpdatedAt,
@@ -136,6 +142,19 @@ func createUser(ctx context.Context, db *sql.DB, user *User) error {
 			return ErrDuplicateEmail
 		}
 		return fmt.Errorf("failed to insert user: %w", err)
+	}
+
+	walletQuery := `
+		INSERT INTO wallets (user_id, balance_kobo)
+		VALUES ($1, 0)
+		ON CONFLICT (user_id) DO NOTHING;
+	`
+	if _, err := tx.ExecContext(ctx, walletQuery, user.ID); err != nil {
+		return fmt.Errorf("failed to initialize user wallet: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit user creation: %w", err)
 	}
 
 	return nil

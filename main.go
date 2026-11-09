@@ -57,7 +57,7 @@ func main() {
 	mux.HandleFunc("/ready", readyHandler(db))
 	mux.HandleFunc("/api/v1/networks", networksHandler)
 	mux.HandleFunc("/api/v1/airtime/validate", validateAirtimeHandler)
-	mux.HandleFunc("/api/v1/airtime/purchase", purchaseAirtimeHandler(db, airtimeProvider))
+	mux.HandleFunc("/api/v1/airtime/purchase", optionalAuthMiddleware(jwtSecret, purchaseAirtimeHandler(db, airtimeProvider)))
 	mux.HandleFunc("/api/v1/transactions/", getTransactionHandler(db))
 	mux.HandleFunc("/api/v1/auth/register", registerHandler(db))
 	mux.HandleFunc("/api/v1/auth/login", loginHandler(db, jwtSecret))

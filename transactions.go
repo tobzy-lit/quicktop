@@ -199,3 +199,27 @@ func getTransactionsByUserID(ctx context.Context, db *sql.DB, userID int64) ([]T
 
 	return transactions, nil
 }
+
+// createTransactionTx inserts a new transaction record within an existing SQL transaction
+func createTransactionTx(ctx context.Context, tx *sql.Tx, tRecord *Transaction) error {
+	query := `
+		INSERT INTO transactions (reference, phone_number, network, amount_kobo, status, user_id)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, created_at, updated_at;
+	`
+	err := tx.QueryRowContext(
+		ctx,
+		query,
+		tRecord.Reference,
+		tRecord.PhoneNumber,
+		tRecord.Network,
+		tRecord.AmountKobo,
+		tRecord.Status,
+		tRecord.UserID,
+	).Scan(&tRecord.ID, &tRecord.CreatedAt, &tRecord.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to insert transaction in tx: %w", err)
+	}
+
+	return nil
+}
