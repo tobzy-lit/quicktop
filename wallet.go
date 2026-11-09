@@ -61,15 +61,21 @@ func CreditWallet(ctx context.Context, tx *sql.Tx, userID int64, amountKobo int6
 		return nil, errors.New("credit amount must be positive")
 	}
 
-	// 1. Lock wallet row for update
+	// 1. Ensure wallet exists and lock row for update
+	initQuery := `
+		INSERT INTO wallets (user_id, balance_kobo)
+		VALUES ($1, 0)
+		ON CONFLICT (user_id) DO NOTHING;
+	`
+	if _, err := tx.ExecContext(ctx, initQuery, userID); err != nil {
+		return nil, fmt.Errorf("failed to ensure wallet exists: %w", err)
+	}
+
 	var walletID int64
 	var currentBalance int64
 	lockQuery := `SELECT id, balance_kobo FROM wallets WHERE user_id = $1 FOR UPDATE`
 	err := tx.QueryRowContext(ctx, lockQuery, userID).Scan(&walletID, &currentBalance)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrWalletNotFound
-		}
 		return nil, fmt.Errorf("error locking wallet: %w", err)
 	}
 
@@ -157,4 +163,48 @@ func DebitWallet(ctx context.Context, tx *sql.Tx, userID int64, amountKobo int64
 	}
 
 	return entry, nil
+}
+
+// GetLedgerEntriesByWalletID fetches the recent ledger entries for a given wallet
+func GetLedgerEntriesByWalletID(ctx context.Context, db *sql.DB, walletID int64, limit int) ([]LedgerEntry, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+
+	query := `
+		SELECT id, wallet_id, amount_kobo, balance_after_kobo, entry_type, reference, description, created_at
+		FROM ledger_entries
+		WHERE wallet_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2;
+	`
+	rows, err := db.QueryContext(ctx, query, walletID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query ledger entries: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []LedgerEntry
+	for rows.Next() {
+		var e LedgerEntry
+		if err := rows.Scan(
+			&e.ID,
+			&e.WalletID,
+			&e.AmountKobo,
+			&e.BalanceAfterKobo,
+			&e.EntryType,
+			&e.Reference,
+			&e.Description,
+			&e.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan ledger entry: %w", err)
+		}
+		entries = append(entries, e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating ledger rows: %w", err)
+	}
+
+	return entries, nil
 }

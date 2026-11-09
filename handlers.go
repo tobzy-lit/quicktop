@@ -615,3 +615,71 @@ func userTransactionsHandler(db *sql.DB) http.HandlerFunc {
 		})
 	}
 }
+
+// WalletDetailsResponse models the JSON returned to authenticated users
+type WalletDetailsResponse struct {
+	Status        string        `json:"status"`
+	WalletID      int64         `json:"wallet_id"`
+	BalanceKobo   int64         `json:"balance_kobo"`
+	BalanceNaira  float64       `json:"balance_naira"`
+	RecentLedger  []LedgerEntry `json:"recent_ledger"`
+}
+
+// getWalletHandler returns the authenticated user's wallet balance and ledger history
+func getWalletHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"status": "error",
+				"error":  "Method not allowed",
+			})
+			return
+		}
+
+		userID, ok := getUserIDFromContext(r.Context())
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"status": "error",
+				"error":  "Unauthorized",
+			})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		wallet, err := GetWalletByUserID(ctx, db, userID)
+		if err != nil {
+			log.Printf("Failed to get wallet for user %d: %v", userID, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"status": "error",
+				"error":  "Failed to retrieve wallet",
+			})
+			return
+		}
+
+		entries, err := GetLedgerEntriesByWalletID(ctx, db, wallet.ID, 20)
+		if err != nil {
+			log.Printf("Failed to fetch ledger entries for wallet %d: %v", wallet.ID, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"status": "error",
+				"error":  "Failed to retrieve wallet ledger history",
+			})
+			return
+		}
+
+		if entries == nil {
+			entries = []LedgerEntry{}
+		}
+
+		balanceNaira := float64(wallet.BalanceKobo) / 100.0
+
+		writeJSON(w, http.StatusOK, WalletDetailsResponse{
+			Status:       "ok",
+			WalletID:     wallet.ID,
+			BalanceKobo:  wallet.BalanceKobo,
+			BalanceNaira: balanceNaira,
+			RecentLedger: entries,
+		})
+	}
+}

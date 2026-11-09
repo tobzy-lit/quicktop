@@ -62,6 +62,7 @@ func main() {
 	mux.HandleFunc("/api/v1/auth/register", registerHandler(db))
 	mux.HandleFunc("/api/v1/auth/login", loginHandler(db, jwtSecret))
 	mux.HandleFunc("/api/v1/user/transactions", requireAuthMiddleware(jwtSecret, userTransactionsHandler(db)))
+	mux.HandleFunc("/api/v1/wallet", requireAuthMiddleware(jwtSecret, getWalletHandler(db)))
 
 	// 5. Configure HTTP server with safety timeouts and CORS
 	server := &http.Server{
