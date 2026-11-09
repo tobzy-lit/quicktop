@@ -30,7 +30,7 @@ func TestPurchaseAndRetrieveAirtime_Integration(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	handler := purchaseAirtimeHandler(db)
+	handler := purchaseAirtimeHandler(db, NewSimulatorProvider())
 	handler.ServeHTTP(w, req)
 
 	resp := w.Result()
@@ -284,7 +284,7 @@ func TestAuthenticatedPurchase_Integration(t *testing.T) {
 	}
 
 	// 3. Wrap purchase handler with optionalAuthMiddleware
-	handler := optionalAuthMiddleware(jwtSecret, purchaseAirtimeHandler(db))
+	handler := optionalAuthMiddleware(jwtSecret, purchaseAirtimeHandler(db, NewSimulatorProvider()))
 
 	payload := `{"network": "GLO", "phone_number": "08051234567", "amount": 200}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/airtime/purchase", strings.NewReader(payload))

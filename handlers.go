@@ -209,7 +209,7 @@ type AirtimePurchaseResponse struct {
 }
 
 // purchaseAirtimeHandler handles POST /api/v1/airtime/purchase
-func purchaseAirtimeHandler(db *sql.DB) http.HandlerFunc {
+func purchaseAirtimeHandler(db *sql.DB, provider AirtimeProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// 1. Method check
 		if r.Method != http.MethodPost {
@@ -334,7 +334,7 @@ func purchaseAirtimeHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Trigger background simulation
-		simulateAirtimeProcessing(db, txRecord.Reference, txRecord.PhoneNumber)
+		dispatchAirtimeTransaction(db, provider, txRecord)
 
 		// 8. Return 201 Created with initial state
 		writeJSON(w, http.StatusCreated, AirtimePurchaseResponse{
