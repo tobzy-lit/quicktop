@@ -82,7 +82,7 @@ class ApiService {
     final body = jsonEncode({
       'phone_number': phoneNumber,
       'network': network,
-      'amount': amountNaira * 100, // Naira to kobo
+      'amount': amountNaira,
     });
 
     final headers = <String, String>{

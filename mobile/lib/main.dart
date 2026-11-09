@@ -221,7 +221,7 @@ class _AirtimeScreenState extends State<AirtimeScreen> {
       _pollCount++;
       try {
         final tx = await ApiService.getTransaction(reference);
-        final status = (tx['status'] as String? ?? '').toUpperCase();
+        final status = (tx['transaction_status'] as String? ?? tx['status'] as String? ?? '').toUpperCase();
 
         if (!mounted) return;
 
