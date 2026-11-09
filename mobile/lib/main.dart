@@ -108,7 +108,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 }
 
 // ==========================================
-// 1. RECHARGE SCREEN
+// ==========================================
+// 1. RECHARGE SCREEN (WITH LIVE STATUS POLLING)
 // ==========================================
 class AirtimeScreen extends StatefulWidget {
   final String? currentUserEmail;
@@ -127,8 +128,13 @@ class _AirtimeScreenState extends State<AirtimeScreen> {
   String? _selectedNetwork;
   bool _isLoadingNetworks = true;
   bool _isSubmitting = false;
-  String? _resultMessage;
-  bool _isSuccess = false;
+
+  // Polling State Tracking
+  bool _isPolling = false;
+  String? _activeReference;
+  String? _transactionStatus; // PENDING, PROCESSING, SUCCESS, FAILED
+  String? _statusDetails;
+  int _pollCount = 0;
 
   @override
   void initState() {
@@ -139,6 +145,7 @@ class _AirtimeScreenState extends State<AirtimeScreen> {
   Future<void> _loadNetworks() async {
     try {
       final networks = await ApiService.getNetworks();
+      if (!mounted) return;
       setState(() {
         _networks = List<String>.from(networks);
         if (_networks.isNotEmpty) {
@@ -147,10 +154,11 @@ class _AirtimeScreenState extends State<AirtimeScreen> {
         _isLoadingNetworks = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoadingNetworks = false;
-        _resultMessage = 'Failed to load networks: $e';
-        _isSuccess = false;
+        _transactionStatus = 'FAILED';
+        _statusDetails = 'Failed to load networks: $e';
       });
     }
   }
@@ -160,7 +168,11 @@ class _AirtimeScreenState extends State<AirtimeScreen> {
 
     setState(() {
       _isSubmitting = true;
-      _resultMessage = null;
+      _isPolling = false;
+      _activeReference = null;
+      _transactionStatus = null;
+      _statusDetails = null;
+      _pollCount = 0;
     });
 
     final phone = _phoneController.text.trim();
@@ -169,27 +181,187 @@ class _AirtimeScreenState extends State<AirtimeScreen> {
 
     try {
       final response = await ApiService.purchaseAirtime(phone, network, amount);
+      final ref = response['reference'] as String? ?? '';
+      final initialStatus = (response['status'] as String? ?? 'PENDING').toUpperCase();
+
+      if (!mounted) return;
       setState(() {
-        _isSuccess = true;
-        _resultMessage =
-            'Recharge Initialized!\nRef: ${response['reference'] ?? 'Pending'}\nStatus: ${response['status'] ?? 'processing'}';
+        _isSubmitting = false;
+        _activeReference = ref;
+        _transactionStatus = initialStatus;
+        _statusDetails = 'Transaction submitted. Initializing fulfillment...';
         _phoneController.clear();
         _amountController.clear();
       });
+
+      // Start automatic polling if not already terminal
+      if (ref.isNotEmpty && initialStatus != 'SUCCESS' && initialStatus != 'FAILED') {
+        _startPolling(ref);
+      }
     } catch (e) {
-      setState(() {
-        _isSuccess = false;
-        _resultMessage = e.toString().replaceAll('Exception: ', '');
-      });
-    } finally {
+      if (!mounted) return;
       setState(() {
         _isSubmitting = false;
+        _transactionStatus = 'FAILED';
+        _statusDetails = e.toString().replaceAll('Exception: ', '');
       });
     }
   }
 
+  Future<void> _startPolling(String reference) async {
+    setState(() {
+      _isPolling = true;
+    });
+
+    const maxPollAttempts = 15; // ~22.5 seconds total
+    while (_isPolling && _pollCount < maxPollAttempts) {
+      await Future.delayed(const Duration(milliseconds: 1500));
+      if (!mounted) return;
+
+      _pollCount++;
+      try {
+        final tx = await ApiService.getTransaction(reference);
+        final status = (tx['status'] as String? ?? '').toUpperCase();
+
+        if (!mounted) return;
+
+        setState(() {
+          _transactionStatus = status;
+          if (status == 'PROCESSING') {
+            _statusDetails = 'Dispatched to telco network... awaiting delivery confirmation.';
+          } else if (status == 'SUCCESS') {
+            _statusDetails = 'Airtime delivered successfully! Reference: $reference';
+            _isPolling = false;
+          } else if (status == 'FAILED') {
+            _statusDetails = tx['error_message'] ?? 'Transaction failed at network gateway.';
+            _isPolling = false;
+          }
+        });
+
+        if (status == 'SUCCESS' || status == 'FAILED') {
+          break;
+        }
+      } catch (e) {
+        // Continue polling if a transient network hiccup occurs
+      }
+    }
+
+    if (!mounted) return;
+    if (_isPolling && _pollCount >= maxPollAttempts) {
+      setState(() {
+        _isPolling = false;
+        _statusDetails = 'Transaction is still processing in background. Track via Lookup.';
+      });
+    }
+  }
+
+  Widget _buildStatusBanner() {
+    if (_transactionStatus == null && _statusDetails == null) {
+      return const SizedBox.shrink();
+    }
+
+    Color bgColor;
+    Color borderColor;
+    Color textColor;
+    IconData icon;
+
+    switch (_transactionStatus) {
+      case 'SUCCESS':
+        bgColor = Colors.green.shade50;
+        borderColor = Colors.green;
+        textColor = Colors.green.shade900;
+        icon = Icons.check_circle_outline;
+        break;
+      case 'FAILED':
+        bgColor = Colors.red.shade50;
+        borderColor = Colors.red;
+        textColor = Colors.red.shade900;
+        icon = Icons.error_outline;
+        break;
+      case 'PROCESSING':
+      case 'PENDING':
+      default:
+        bgColor = Colors.amber.shade50;
+        borderColor = Colors.amber.shade700;
+        textColor = Colors.amber.shade900;
+        icon = Icons.sync;
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: borderColor, width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              _isPolling
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.2,
+                        color: borderColor,
+                      ),
+                    )
+                  : Icon(icon, color: borderColor, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Status: ${_transactionStatus ?? "PENDING"}',
+                  style: TextStyle(
+                    color: textColor,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              if (_isPolling)
+                Text(
+                  'Live ($_pollCount)',
+                  style: TextStyle(
+                    color: textColor.withValues(alpha: 0.7),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+            ],
+          ),
+          if (_statusDetails != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _statusDetails!,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 13,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ],
+          if (_activeReference != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Ref: $_activeReference',
+              style: TextStyle(
+                color: textColor.withValues(alpha: 0.8),
+                fontSize: 11,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    _isPolling = false;
     _phoneController.dispose();
     _amountController.dispose();
     super.dispose();
@@ -235,7 +407,7 @@ class _AirtimeScreenState extends State<AirtimeScreen> {
                           ),
                           const SizedBox(height: 20),
                           DropdownButtonFormField<String>(
-                            value: _selectedNetwork,
+                            initialValue: _selectedNetwork,
                             decoration: const InputDecoration(
                               labelText: 'Network Provider',
                               border: OutlineInputBorder(),
@@ -247,16 +419,19 @@ class _AirtimeScreenState extends State<AirtimeScreen> {
                                 child: Text(net),
                               );
                             }).toList(),
-                            onChanged: (val) {
-                              setState(() {
-                                _selectedNetwork = val;
-                              });
-                            },
+                            onChanged: _isSubmitting || _isPolling
+                                ? null
+                                : (val) {
+                                    setState(() {
+                                      _selectedNetwork = val;
+                                    });
+                                  },
                           ),
                           const SizedBox(height: 16),
                           TextFormField(
                             controller: _phoneController,
                             keyboardType: TextInputType.phone,
+                            enabled: !_isSubmitting && !_isPolling,
                             decoration: const InputDecoration(
                               labelText: 'Phone Number',
                               hintText: '08012345678',
@@ -277,6 +452,7 @@ class _AirtimeScreenState extends State<AirtimeScreen> {
                           TextFormField(
                             controller: _amountController,
                             keyboardType: TextInputType.number,
+                            enabled: !_isSubmitting && !_isPolling,
                             decoration: const InputDecoration(
                               labelText: 'Amount (₦)',
                               hintText: '500',
@@ -301,7 +477,7 @@ class _AirtimeScreenState extends State<AirtimeScreen> {
                               backgroundColor: Theme.of(context).colorScheme.primary,
                               foregroundColor: Colors.white,
                             ),
-                            onPressed: _isSubmitting ? null : _handlePurchase,
+                            onPressed: (_isSubmitting || _isPolling) ? null : _handlePurchase,
                             child: _isSubmitting
                                 ? const SizedBox(
                                     height: 20,
@@ -314,25 +490,7 @@ class _AirtimeScreenState extends State<AirtimeScreen> {
                                 : const Text('Recharge Now', style: TextStyle(fontSize: 16)),
                           ),
                           const SizedBox(height: 16),
-                          if (_resultMessage != null)
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: _isSuccess ? Colors.green.shade50 : Colors.red.shade50,
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: _isSuccess ? Colors.green : Colors.red,
-                                ),
-                              ),
-                              child: Text(
-                                _resultMessage!,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: _isSuccess ? Colors.green.shade900 : Colors.red.shade900,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
+                          _buildStatusBanner(),
                         ],
                       ),
                     ),
@@ -344,7 +502,6 @@ class _AirtimeScreenState extends State<AirtimeScreen> {
   }
 }
 
-// ==========================================
 // 2. LOOKUP SCREEN
 // ==========================================
 class LookupScreen extends StatefulWidget {
