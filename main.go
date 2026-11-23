@@ -44,14 +44,17 @@ func main() {
 		log.Printf("[Provider] Initialized local provider: Simulator")
 	}
 
-	// 3. Initialize PostgreSQL connection pool
+	// 3. Initialize Payment Gateway Client (Paystack)
+	paystackClient := NewPaystackClient()
+
+	// 4. Initialize PostgreSQL connection pool
 	db, err := initDB(dbURL)
 	if err != nil {
 		log.Fatalf("Database initialization failed: %v", err)
 	}
 	defer db.Close()
 
-	// 4. Set up routes
+	// 5. Set up routes
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/ready", readyHandler(db))
@@ -63,8 +66,11 @@ func main() {
 	mux.HandleFunc("/api/v1/auth/login", loginHandler(db, jwtSecret))
 	mux.HandleFunc("/api/v1/user/transactions", requireAuthMiddleware(jwtSecret, userTransactionsHandler(db)))
 	mux.HandleFunc("/api/v1/wallet", requireAuthMiddleware(jwtSecret, getWalletHandler(db)))
+	mux.HandleFunc("/api/v1/wallet/fund/initialize", requireAuthMiddleware(jwtSecret, initializeTopupHandler(db, paystackClient)))
+	mux.HandleFunc("/api/v1/wallet/fund/verify", requireAuthMiddleware(jwtSecret, verifyTopupHandler(db, paystackClient)))
+	mux.HandleFunc("/api/v1/webhooks/paystack", paystackWebhookHandler(db, paystackClient.SecretKey))
 
-	// 5. Configure HTTP server with safety timeouts and CORS
+	// 6. Configure HTTP server with safety timeouts and CORS
 	server := &http.Server{
 		Addr:         ":" + port,
 		Handler:      corsMiddleware(mux),

@@ -233,3 +233,14 @@ func verifyToken(tokenString string, secret string) (*AuthClaims, error) {
 
 	return claims, nil
 }
+
+// getUserByID retrieves a user record by primary key ID
+func getUserByID(ctx context.Context, db *sql.DB, userID int64) (*User, error) {
+	query := `SELECT id, email, password_hash, created_at FROM users WHERE id = $1`
+	u := &User{}
+	err := db.QueryRowContext(ctx, query, userID).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return u, nil
+}
